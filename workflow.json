@@ -1,0 +1,1120 @@
+{
+  "name": "[98] Doc Extract Gate",
+  "description": null,
+  "active": false,
+  "versionCounter": 108,
+  "sourceWorkflowId": null,
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "value": "1HWvki1ORrnp43p6AsJY0UqtBRz6zPobp",
+          "mode": "list",
+          "cachedResultName": "REDACTED",
+          "cachedResultUrl": "REDACTED"
+        },
+        "event": "fileCreated",
+        "options": {}
+      },
+      "id": "2b766e8f-f57e-47a1-80ff-23989b25e0fa",
+      "name": "Watch Invoice Folder",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        288
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REDACTED",
+          "name": "attach your own credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "options": {
+          "binaryPropertyName": "data"
+        }
+      },
+      "id": "feee485b-51a9-4df0-bb18-20c13e5d3c84",
+      "name": "Download File",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        192,
+        288
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REDACTED",
+          "name": "attach your own credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first();\nconst json = item.json;\nconst fileId = json.fileId || json.id || '';\nconst fileName = json.fileName || json.name || 'unknown';\nconst mimeType = json.mimeType || '';\nreturn [{ json: { fileId, fileName, mimeType }, binary: item.binary }];"
+      },
+      "id": "bad49b44-7498-46f2-80c4-4bc5a6f24400",
+      "name": "Parse File Metadata",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        368,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "google/gemini-3.1-flash-lite",
+          "mode": "list",
+          "cachedResultName": "REDACTED"
+        },
+        "prompt": "You are an invoice data extraction engine. Read this document and extract exactly these six fields:\n\n1. vendor\n2. invoiceNumber\n3. issueDate\n4. dueDate\n5. total\n6. currency\n\nFor EVERY field you MUST supply three things:\n- value: the extracted text\n- confidence: your confidence from 0.00 to 1.00\n- evidence: the exact text from the document that the value was read from (verbatim copy), or null if the value was inferred rather than read\n\nReturn ONLY valid JSON with this exact structure:\n{\n  \"vendor\": { \"value\": \"Acme Corp\", \"confidence\": 0.95, \"evidence\": \"Acme Corporation\" },\n  \"invoiceNumber\": { \"value\": \"INV-2026-001\", \"confidence\": 0.98, \"evidence\": \"INV-2026-001\" },\n  \"issueDate\": { \"value\": \"2026-03-15\", \"confidence\": 0.97, \"evidence\": \"Issue Date: 2026-03-15\" },\n  \"dueDate\": { \"value\": \"2026-04-14\", \"confidence\": 0.96, \"evidence\": \"Due Date: 2026-04-14\" },\n  \"total\": { \"value\": \"1,234.56\", \"confidence\": 0.92, \"evidence\": \"Total: $1,234.56\" },\n  \"currency\": { \"value\": \"USD\", \"confidence\": 0.99, \"evidence\": \"USD\" }\n}\n\nIf a field cannot be found, set value to \"\" and confidence to 0 and evidence to null.",
+        "options": {}
+      },
+      "id": "d0cf463e-2b29-440c-8177-bf9cbd347c67",
+      "name": "Vision - Extract Invoice Fields",
+      "type": "n8n-nodes-openrouter-official.openRouter",
+      "typeVersion": 1,
+      "position": [
+        928,
+        288
+      ],
+      "credentials": {
+        "openRouterCommunityApi": {
+          "id": "REDACTED",
+          "name": "attach your own credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.choices?.[0]?.message?.content || $json.output || $json.response || '';\nif (!raw || typeof raw !== 'string' || raw.trim() === '') { throw new Error('VALIDATION_FAILED'); }\nconst REQUIRED = ['vendor','invoiceNumber','issueDate','dueDate','total','currency'];\nlet parsed;\ntry { const cleaned = raw.trim().replace(/^```(?:json)?\\s*/, '').replace(/```\\s*$/, '').trim(); parsed = JSON.parse(cleaned); } catch(e) { throw new Error('INVALID_JSON: '+e.message); }\nfor(const f of REQUIRED) { const e = parsed[f]; if(!e || e.value===undefined || e.confidence===undefined || e.evidence===undefined) { throw new Error('MISSING_FIELD: '+f); } if(e.evidence!==null && typeof e.evidence!=='string') { throw new Error('BAD_EVIDENCE: '+f); } const c = Number(e.confidence); if(isNaN(c) || c<0 || c>1) { throw new Error('BAD_CONFIDENCE: '+f+'='+e.confidence); } }\nconst u = $json.usage||{};\n// O ARQUIVO NAO ESTA EM $json. Aqui $json e a resposta do modelo (OpenRouter),\n// que nao carrega fileId/fileName/mimeType nem o binario. Ler do no nomeado.\nconst meta = $('Parse File Metadata').first();\nreturn [{ json: { extraction: parsed, vendor: parsed.vendor.value, vendorConf: Number(parsed.vendor.confidence), vendorEvidence: parsed.vendor.evidence, invoiceNumber: parsed.invoiceNumber.value, invoiceNumberConf: Number(parsed.invoiceNumber.confidence), invoiceNumberEvidence: parsed.invoiceNumber.evidence, issueDate: parsed.issueDate.value, issueDateConf: Number(parsed.issueDate.confidence), issueDateEvidence: parsed.issueDate.evidence, dueDate: parsed.dueDate.value, dueDateConf: Number(parsed.dueDate.confidence), dueDateEvidence: parsed.dueDate.evidence, total: parsed.total.value, totalConf: Number(parsed.total.confidence), totalEvidence: parsed.total.evidence, currency: parsed.currency.value, currencyConf: Number(parsed.currency.confidence), currencyEvidence: parsed.currency.evidence, costUsd: u.total_cost||0, tokensIn: u.prompt_tokens||0, tokensOut: u.completion_tokens||0, model: $json.model||'unknown', provider: $json.provider||'unknown', fileId: meta.json.fileId, fileName: meta.json.fileName, mimeType: meta.json.mimeType }, binary: meta.binary }];"
+      },
+      "id": "a2cdf409-eb92-4780-ac75-1c0f98253a5a",
+      "name": "Validate Model Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1104,
+        288
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {},
+      "id": "e6b17275-5ca7-4a81-88a6-7c1cabb02a49",
+      "name": "Validation Failed",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1344,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "ai_cost_ledger"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ts": "={{ $now.toISO() }}",
+            "execution_id": "={{ $execution.id }}",
+            "workflow": "={{ $workflow.name }}",
+            "node": "Vision - Extract Invoice Fields",
+            "model": "={{ $json.model }}",
+            "provider": "={{ $json.provider }}",
+            "modality": "vision",
+            "tokens_in": "={{ $json.tokensIn }}",
+            "tokens_out": "={{ $json.tokensOut }}",
+            "units": 1,
+            "cost_usd": "={{ $json.costUsd }}",
+            "latency_ms": 0,
+            "ok": true,
+            "note": "={{ $json.fileName }}"
+          },
+          "schema": [
+            {
+              "id": "ts",
+              "displayName": "ts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "execution_id",
+              "displayName": "execution_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflow",
+              "displayName": "workflow",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "node",
+              "displayName": "node",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "model",
+              "displayName": "model",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "provider",
+              "displayName": "provider",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "modality",
+              "displayName": "modality",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tokens_in",
+              "displayName": "tokens_in",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tokens_out",
+              "displayName": "tokens_out",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "units",
+              "displayName": "units",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "cost_usd",
+              "displayName": "cost_usd",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "latency_ms",
+              "displayName": "latency_ms",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ok",
+              "displayName": "ok",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "note",
+              "displayName": "note",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4e36b782-89a6-4b88-a6df-049cfb003e30",
+      "name": "Log AI Cost",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1344,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "name": "threshold",
+              "value": 0.7,
+              "type": "number",
+              "id": "threshold"
+            },
+            {
+              "name": "costCeiling",
+              "value": 0.5,
+              "type": "number",
+              "id": "costCeiling"
+            },
+            {
+              "name": "destinationTable",
+              "value": "invoice_records",
+              "type": "string",
+              "id": "destinationTable"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {
+          "stripBinary": false
+        }
+      },
+      "id": "fde45725-a5f8-493f-aa28-1309d6d818a0",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        560,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// $json AQUI E A LINHA DO 'Log AI Cost' (data table), nao a extracao. Ler dela\n// fazia todo *Conf virar undefined -> Number(undefined) = NaN -> NaN < threshold\n// e false -> lowFields vazio -> allPass true SEMPRE. O portao nunca fechou.\nconst src = $('Validate Model Output').first().json;\nconst cfg = $('Config').first().json;\nconst threshold = Number(cfg.threshold);\n\nif (threshold === null || threshold === undefined || isNaN(threshold) || threshold < 0 || threshold > 1) {\n  throw new Error('GATE_BROKEN: threshold is ' + JSON.stringify(cfg.threshold) + ' - must be a number between 0 and 1');\n}\n\nconst fields = [\n  { name: 'vendor', conf: Number(src.vendorConf), evidence: src.vendorEvidence },\n  { name: 'invoiceNumber', conf: Number(src.invoiceNumberConf), evidence: src.invoiceNumberEvidence },\n  { name: 'issueDate', conf: Number(src.issueDateConf), evidence: src.issueDateEvidence },\n  { name: 'dueDate', conf: Number(src.dueDateConf), evidence: src.dueDateEvidence },\n  { name: 'total', conf: Number(src.totalConf), evidence: src.totalEvidence },\n  { name: 'currency', conf: Number(src.currencyConf), evidence: src.currencyEvidence },\n];\n\n// FALHA FECHADO: confianca ausente ou nao-numerica vai pra revisao humana.\n// Sem o Number.isFinite, um NaN passava direto - que era exatamente o bug.\nconst lowFields = fields.filter((f) => !Number.isFinite(f.conf) || f.conf < threshold || f.evidence === null);\n\nreturn [{ json: {\n  allPass: lowFields.length === 0,\n  threshold,\n  lowFieldNames: lowFields.map((f) => f.name),\n  lowFieldCount: lowFields.length,\n  vendor: src.vendor, vendorConf: src.vendorConf, vendorEvidence: src.vendorEvidence,\n  invoiceNumber: src.invoiceNumber, invoiceNumberConf: src.invoiceNumberConf, invoiceNumberEvidence: src.invoiceNumberEvidence,\n  issueDate: src.issueDate, issueDateConf: src.issueDateConf, issueDateEvidence: src.issueDateEvidence,\n  dueDate: src.dueDate, dueDateConf: src.dueDateConf, dueDateEvidence: src.dueDateEvidence,\n  total: src.total, totalConf: src.totalConf, totalEvidence: src.totalEvidence,\n  currency: src.currency, currencyConf: src.currencyConf, currencyEvidence: src.currencyEvidence,\n  costUsd: src.costUsd,\n  fileName: src.fileName, fileId: src.fileId, mimeType: src.mimeType,\n  model: src.model, provider: src.provider,\n  destinationTable: cfg.destinationTable,\n}, binary: $('Parse File Metadata').first().binary }];"
+      },
+      "id": "35e960dd-9148-4b49-ba6a-94e6131b112a",
+      "name": "Gate Evaluation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        272
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {},
+      "id": "7a03ba32-b29a-4eaf-a077-dcf0118e43b9",
+      "name": "Cost Ceiling Exceeded",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1728,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.allPass }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "bf701dab-75cf-4bf3-b768-5d836a26bd05",
+      "name": "All Above Threshold?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1712,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "name": "humanCorrectedFields",
+              "value": "",
+              "type": "string",
+              "id": "humanCorrectedFields"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {
+          "stripBinary": false
+        }
+      },
+      "id": "3bacf7a2-cd02-499f-af7b-85add0962130",
+      "name": "No Corrections Needed",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1904,
+        240
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "fdb839c1-4eb5-4a73-845b-2e910354661b",
+      "name": "Converge Branches",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2640,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const lowFields = $json.lowFieldNames || [];\nconst labels = { vendor: 'Vendor', invoiceNumber: 'Invoice #', issueDate: 'Issue Date', dueDate: 'Due Date', total: 'Total', currency: 'Currency' };\nconst vals = { vendor: $json.vendor || '', invoiceNumber: $json.invoiceNumber || '', issueDate: $json.issueDate || '', dueDate: $json.dueDate || '', total: $json.total || '', currency: $json.currency || '' };\nconst evidence = { vendor: $json.vendorEvidence, invoiceNumber: $json.invoiceNumberEvidence, issueDate: $json.issueDateEvidence, dueDate: $json.dueDateEvidence, total: $json.totalEvidence, currency: $json.currencyEvidence };\n\nlet msg = '*Invoice Review - Gate Fired*\\n\\n';\nmsg += 'File: ' + ($json.fileName || '?') + '\\n\\n';\nmsg += 'Fields needing review:\\n';\nlowFields.forEach((f) => {\n  msg += '- *' + labels[f] + '* (conf: ' + $json[f + 'Conf'] + ')';\n  const ev = evidence[f];\n  if (ev !== null && ev !== undefined) msg += ' - evidence: \"' + ev + '\"';\n  msg += '\\n';\n});\nmsg += '\\nCorrect the fields below and submit.';\n\n// CHAVES ACEITAS pelo formulario do sendAndWait: fieldLabel, fieldType,\n// placeholder, requiredField. `fieldName`, `defaultValue` e `required` NAO existem\n// e derrubam o no com \"Key 'x' in field N is not valid for form fields\".\n//\n// A RESPOSTA VEM CHAVEADA PELO fieldLabel. Por isso o label fica limpo e estavel\n// e o valor atual vai no placeholder: label com valor dentro muda a cada execucao\n// e o merge deixa de achar a resposta.\nconst formFields = lowFields.map((f) => ({\n  fieldLabel: labels[f],\n  fieldType: 'text',\n  placeholder: vals[f] ? ('current: ' + vals[f]) : 'nothing was extracted',\n  requiredField: true,\n}));\n\n// Mapa label -> campo canonico, consumido pelo 'Merge Human Corrections'.\n// SEM ISTO o merge nao detecta correcao nenhuma, e falha CALADO.\nconst labelToField = {};\nfor (const f of lowFields) labelToField[labels[f]] = f;\n\nreturn [{ json: {\n  telegramMessage: msg,\n  telegramFormFields: formFields,\n  labelToField,\n  vendor: $json.vendor, vendorConf: $json.vendorConf, vendorEvidence: $json.vendorEvidence,\n  invoiceNumber: $json.invoiceNumber, invoiceNumberConf: $json.invoiceNumberConf, invoiceNumberEvidence: $json.invoiceNumberEvidence,\n  issueDate: $json.issueDate, issueDateConf: $json.issueDateConf, issueDateEvidence: $json.issueDateEvidence,\n  dueDate: $json.dueDate, dueDateConf: $json.dueDateConf, dueDateEvidence: $json.dueDateEvidence,\n  total: $json.total, totalConf: $json.totalConf, totalEvidence: $json.totalEvidence,\n  currency: $json.currency, currencyConf: $json.currencyConf, currencyEvidence: $json.currencyEvidence,\n  costUsd: $json.costUsd,\n  fileName: $json.fileName, fileId: $json.fileId, mimeType: $json.mimeType,\n  lowFieldNames: lowFields,\n  model: $json.model, provider: $json.provider,\n  threshold: $json.threshold, destinationTable: $json.destinationTable,\n}, binary: $input.first().binary }];"
+      },
+      "id": "55ad1466-54be-42a3-9365-9dcc7e13cc10",
+      "name": "Build Telegram Form",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1952,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "sendAndWait",
+        "chatId": "REDACTED",
+        "message": "={{ $json.telegramMessage }}",
+        "responseType": "customForm",
+        "defineForm": "json",
+        "jsonOutput": "={{ $json.telegramFormFields }}",
+        "options": {}
+      },
+      "id": "89bc466b-9a89-44c6-8b96-0f77ba361405",
+      "name": "Telegram - Review Request",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2128,
+        480
+      ],
+      "webhookId": "REDACTED",
+      "credentials": {
+        "telegramApi": {
+          "id": "REDACTED",
+          "name": "attach your own credential"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// $input aqui e o 'Wait', que traz a resposta do humano.\n// $json seria ESSE MESMO item: comparar contra $json comparava o humano com ele\n// mesmo, entao nada nunca contava como corrigido. O valor do modelo vem do no nomeado.\nconst human = $input.first().json;\nconst src = $('Build Telegram Form').first().json;\nconst corrected = [];\n\nconst r = {\n  vendor: src.vendor || '', vendorConf: src.vendorConf || 0, vendorEvidence: src.vendorEvidence,\n  invoiceNumber: src.invoiceNumber || '', invoiceNumberConf: src.invoiceNumberConf || 0, invoiceNumberEvidence: src.invoiceNumberEvidence,\n  issueDate: src.issueDate || '', issueDateConf: src.issueDateConf || 0, issueDateEvidence: src.issueDateEvidence,\n  dueDate: src.dueDate || '', dueDateConf: src.dueDateConf || 0, dueDateEvidence: src.dueDateEvidence,\n  total: src.total || '', totalConf: src.totalConf || 0, totalEvidence: src.totalEvidence,\n  currency: src.currency || '', currencyConf: src.currencyConf || 0, currencyEvidence: src.currencyEvidence,\n};\n\nconst campos = ['vendor', 'invoiceNumber', 'issueDate', 'dueDate', 'total', 'currency'];\nfor (const f of campos) {\n  const hv = human[f];\n  const original = src[f] == null ? '' : String(src[f]);\n  if (hv !== undefined && hv !== null && String(hv).trim() !== '' && String(hv).trim() !== original) {\n    r[f] = String(hv).trim();\n    corrected.push(f);\n    r[f + 'Conf'] = 1.0;\n  }\n}\nr.humanCorrectedFields = corrected.join(',');\n\nconst pass = ['fileName', 'fileId', 'mimeType', 'costUsd', 'threshold', 'destinationTable', 'model', 'provider'];\npass.forEach((k) => { r[k] = src[k]; });\n\nreturn [{ json: r, binary: $('Parse File Metadata').first().binary }];"
+      },
+      "id": "05122b0a-3c83-467f-a3ec-ecc8975f3168",
+      "name": "Merge Human Corrections",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2448,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ts",
+              "name": "ts",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "source_file",
+              "name": "source_file",
+              "value": "={{ $json.fileName }}",
+              "type": "string"
+            },
+            {
+              "id": "vendor",
+              "name": "vendor",
+              "value": "={{ $json.vendor }}",
+              "type": "string"
+            },
+            {
+              "id": "vendor_conf",
+              "name": "vendor_conf",
+              "value": "={{ $json.vendorConf }}",
+              "type": "number"
+            },
+            {
+              "id": "invoice_number",
+              "name": "invoice_number",
+              "value": "={{ $json.invoiceNumber }}",
+              "type": "string"
+            },
+            {
+              "id": "invoice_number_conf",
+              "name": "invoice_number_conf",
+              "value": "={{ $json.invoiceNumberConf }}",
+              "type": "number"
+            },
+            {
+              "id": "issue_date",
+              "name": "issue_date",
+              "value": "={{ $json.issueDate }}",
+              "type": "string"
+            },
+            {
+              "id": "issue_date_conf",
+              "name": "issue_date_conf",
+              "value": "={{ $json.issueDateConf }}",
+              "type": "number"
+            },
+            {
+              "id": "due_date",
+              "name": "due_date",
+              "value": "={{ $json.dueDate }}",
+              "type": "string"
+            },
+            {
+              "id": "due_date_conf",
+              "name": "due_date_conf",
+              "value": "={{ $json.dueDateConf }}",
+              "type": "number"
+            },
+            {
+              "id": "total",
+              "name": "total",
+              "value": "={{ $json.total }}",
+              "type": "string"
+            },
+            {
+              "id": "total_conf",
+              "name": "total_conf",
+              "value": "={{ $json.totalConf }}",
+              "type": "number"
+            },
+            {
+              "id": "currency",
+              "name": "currency",
+              "value": "={{ $json.currency }}",
+              "type": "string"
+            },
+            {
+              "id": "currency_conf",
+              "name": "currency_conf",
+              "value": "={{ $json.currencyConf }}",
+              "type": "number"
+            },
+            {
+              "id": "human_corrected_fields",
+              "name": "human_corrected_fields",
+              "value": "={{ $json.humanCorrectedFields }}",
+              "type": "string"
+            },
+            {
+              "id": "gate_threshold",
+              "name": "gate_threshold",
+              "value": "={{ $json.threshold }}",
+              "type": "number"
+            },
+            {
+              "id": "cost_usd",
+              "name": "cost_usd",
+              "value": "={{ $json.costUsd }}",
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {
+          "stripBinary": true
+        }
+      },
+      "id": "6f551788-b3cf-4031-8a20-cf5f1b30c8c1",
+      "name": "Prepare Row for Insert",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        2784,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "invoice_records"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ts": "={{ $json.ts }}",
+            "source_file": "={{ $json.source_file }}",
+            "vendor": "={{ $json.vendor }}",
+            "vendor_conf": "={{ $json.vendor_conf }}",
+            "invoice_number": "={{ $json.invoice_number }}",
+            "invoice_number_conf": "={{ $json.invoice_number_conf }}",
+            "issue_date": "={{ $json.issue_date }}",
+            "issue_date_conf": "={{ $json.issue_date_conf }}",
+            "due_date": "={{ $json.due_date }}",
+            "due_date_conf": "={{ $json.due_date_conf }}",
+            "total": "={{ $json.total }}",
+            "total_conf": "={{ $json.total_conf }}",
+            "currency": "={{ $json.currency }}",
+            "currency_conf": "={{ $json.currency_conf }}",
+            "human_corrected_fields": "={{ $json.human_corrected_fields }}",
+            "gate_threshold": "={{ $json.gate_threshold }}",
+            "cost_usd": "={{ $json.cost_usd }}"
+          },
+          "schema": [
+            {
+              "id": "ts",
+              "displayName": "ts",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "source_file",
+              "displayName": "source_file",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vendor",
+              "displayName": "vendor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vendor_conf",
+              "displayName": "vendor_conf",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "invoice_number",
+              "displayName": "invoice_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "invoice_number_conf",
+              "displayName": "invoice_number_conf",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "issue_date",
+              "displayName": "issue_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "issue_date_conf",
+              "displayName": "issue_date_conf",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "due_date",
+              "displayName": "due_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "due_date_conf",
+              "displayName": "due_date_conf",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "total",
+              "displayName": "total",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "total_conf",
+              "displayName": "total_conf",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "currency",
+              "displayName": "currency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "currency_conf",
+              "displayName": "currency_conf",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "human_corrected_fields",
+              "displayName": "human_corrected_fields",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "gate_threshold",
+              "displayName": "gate_threshold",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "cost_usd",
+              "displayName": "cost_usd",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "6cd5dc5e-5a1e-42dd-99d5-b26bfa9d06ba",
+      "name": "Insert Invoice Record",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2976,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "move",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $('Parse File Metadata').first().json.fileId }}"
+        },
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "1sjASH7H1q9IGQl-FkmnM_AWa41tyy59V",
+          "mode": "list",
+          "cachedResultName": "REDACTED",
+          "cachedResultUrl": "REDACTED"
+        }
+      },
+      "id": "3b439265-b366-4b0d-a781-1516c49735bb",
+      "name": "Move to Processed",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        3168,
+        240
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "REDACTED",
+          "name": "attach your own credential"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "b7fceb60-a75f-4b32-babd-a6553234d60d",
+      "name": "Success",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        3360,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "content": "NON-NEGOTIABLE RULES\nMissing field -> stop\nConfidence not 0-1 -> stop\nEmpty response -> stop\nCost ceiling -> stop\nNo row before gate resolves",
+        "height": 110,
+        "width": 300,
+        "color": 2
+      },
+      "id": "8823bcc6-2ad5-4b53-b1af-558db604937a",
+      "name": "Sticky Note 3f3bbfa3",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        384,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "content": "[98] Doc Extract Gate\nWatches invoice subfolder\nVision extracts 6 fields + confidence\nGate: all >= threshold -> auto-pass\nGate: any < threshold -> Telegram custom form\nLogs each call to ai_cost_ledger\nWrites to invoice_records\nMoves file to processed folder",
+        "height": 256,
+        "width": 360,
+        "color": 4
+      },
+      "id": "d65ed30a-a118-4dd1-935d-f98c19e1b48f",
+      "name": "Sticky Note 1ccb938e",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -32,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const costCeiling = Number($json.costCeiling);\n\nif (isNaN(costCeiling) || costCeiling <= 0) {\n  throw new Error('NO_BUDGET: costCeiling is ' + $json.costCeiling);\n}\n\nreturn $input.all();"
+      },
+      "id": "737ef3bd-cbf0-435d-b737-dbe12bfdf8f0",
+      "name": "Ceiling Pre-Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        752,
+        288
+      ]
+    }
+  ],
+  "connections": {
+    "Watch Invoice Folder": {
+      "main": [
+        [
+          {
+            "node": "Download File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download File": {
+      "main": [
+        [
+          {
+            "node": "Parse File Metadata",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vision - Extract Invoice Fields": {
+      "main": [
+        [
+          {
+            "node": "Validate Model Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Model Output": {
+      "main": [
+        [
+          {
+            "node": "Log AI Cost",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validation Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gate Evaluation": {
+      "main": [
+        [
+          {
+            "node": "All Above Threshold?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Cost Ceiling Exceeded",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "All Above Threshold?": {
+      "main": [
+        [
+          {
+            "node": "No Corrections Needed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Telegram Form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Corrections Needed": {
+      "main": [
+        [
+          {
+            "node": "Converge Branches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Converge Branches": {
+      "main": [
+        [
+          {
+            "node": "Prepare Row for Insert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Telegram Form": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Review Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Human Corrections": {
+      "main": [
+        [
+          {
+            "node": "Converge Branches",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Prepare Row for Insert": {
+      "main": [
+        [
+          {
+            "node": "Insert Invoice Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Invoice Record": {
+      "main": [
+        [
+          {
+            "node": "Move to Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Move to Processed": {
+      "main": [
+        [
+          {
+            "node": "Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse File Metadata": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Ceiling Pre-Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ceiling Pre-Check": {
+      "main": [
+        [
+          {
+            "node": "Vision - Extract Invoice Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log AI Cost": {
+      "main": [
+        [
+          {
+            "node": "Gate Evaluation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram - Review Request": {
+      "main": [
+        [
+          {
+            "node": "Merge Human Corrections",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate"
+  },
+  "tags": []
+}
